@@ -18,6 +18,7 @@ namespace AspNetCore.SassCompiler
         private readonly string _sourceFolder;
         private readonly string _targetFolder;
         private readonly string _arguments;
+        private readonly string _pidFile;
 
         private Process _process;
 
@@ -26,6 +27,7 @@ namespace AspNetCore.SassCompiler
             _sourceFolder = configuration["SassCompiler:SourceFolder"]?.Replace('\\', '/') ?? "Styles";
             _targetFolder = configuration["SassCompiler:TargetFolder"]?.Replace('\\', '/') ?? "wwwroot/css";
             _arguments = configuration["SassCompiler:Arguments"];
+            _pidFile = Path.Join(Directory.GetCurrentDirectory(), ".sasscompiler.pid");
 
             _logger = logger;
         }
@@ -51,6 +53,9 @@ namespace AspNetCore.SassCompiler
                 _process = null;
             }
 
+            if (File.Exists(_pidFile))
+                File.Delete(_pidFile);
+
             return Task.CompletedTask;
         }
 
@@ -65,10 +70,29 @@ namespace AspNetCore.SassCompiler
                 _process.Dispose();
                 _process = null;
             }
+
+            if (File.Exists(_pidFile))
+                File.Delete(_pidFile);
         }
 
         private void StartProcess()
         {
+            if (File.Exists(_pidFile) && int.TryParse(File.ReadAllText(_pidFile).Trim(), out var pid))
+            {
+                try
+                {
+                    var process = Process.GetProcessById(pid);
+                    if (process.ProcessName == "dart.exe" || process.ProcessName == "dart" || process.ProcessName == "sass")
+                        process.Kill();
+                }
+                catch (ArgumentException)
+                {
+                    // process is not running
+                }
+
+                File.Delete(_pidFile);
+            }
+
             _process = GetSassProcess();
             if (_process == null)
             {
@@ -95,6 +119,9 @@ namespace AspNetCore.SassCompiler
             _process.BeginOutputReadLine();
             _process.BeginErrorReadLine();
 
+            File.WriteAllText(_pidFile, _process.Id.ToString());
+            File.SetAttributes(_pidFile, File.GetAttributes(_pidFile) | FileAttributes.Hidden);
+
             _logger.LogInformation("Started Sass watch");
         }
 
@@ -102,6 +129,8 @@ namespace AspNetCore.SassCompiler
         {
             _process.Dispose();
             _process = null;
+
+            File.Delete(_pidFile);
 
             _logger.LogWarning("Sass compiler exited, restarting in 1 second.");
 
